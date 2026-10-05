@@ -1,0 +1,212 @@
+@startuml C2_ToBe_GoFuture
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+' Требуется доступ к raw.githubusercontent.com (C4-PlantUML). Офлайн можно заменить на !include <C4/C4_Container>
+
+title C2 (Container) - GoFuture To-Be: доменные сервисы и слой обратной совместимости
+skinparam nodesep 30
+skinparam ranksep 45
+
+' ===================== ЛЮДИ =====================
+Person(passenger, "Пассажир", "Заказывает и оплачивает поездки")
+Person(driver, "Водитель", "Принимает заказы, получает выплаты")
+Person(manager, "Корпоративный менеджер", "Управляет корпоративными поездками и счетами")
+Person(accountant, "Бухгалтер", "Контролирует выплаты")
+Person(support, "Оператор поддержки", "Разбирает обращения и инциденты")
+Person(sre, "SRE инженер", "Эксплуатация и надёжность")
+Person(dev, "Разработчик", "Разрабатывает и деплоит сервисы")
+
+' ===================== КЛИЕНТЫ =====================
+System_Boundary(clients, "Клиентские приложения") {
+    Container(app_passenger, "Пассажирское приложение", "iOS / Android / HMS", "Заказ, отслеживание и оплата поездок")
+    Container(app_driver, "Водительское приложение", "iOS / Android / HMS", "Приём заказов, статусы, баланс и выплаты")
+    Container(portal_corp, "Корпоративный портал", "Web (React)", "Корпоративные поездки и счета")
+    Container(portal_admin, "Админ-панель", "Web (React)", "Операционное управление и поддержка")
+}
+
+' ===================== СЛОЙ ОБРАТНОЙ СОВМЕСТИМОСТИ =====================
+System_Boundary(bc, "Слой обратной совместимости (Backward Compatibility Layer)") {
+    Container(gateway, "API Gateway / BFF / Strangler Facade", "Kong / Envoy + BFF", "Единый стабильный контракт для клиентов. Маршрутизирует запросы в новые сервисы или в легаси-монолит. Управляет версиями, деприкейшном и fallback")
+    Container(acl, "Anti-Corruption Layer", "Adapters / Translators", "Трансляция моделей: легаси-модель <-> доменные модели, внешние провайдеры <-> внутренние форматы")
+}
+
+' ===================== ПЛАТФОРМА =====================
+System_Boundary(platform, "Платформенные сервисы") {
+    Container(iam, "Identity & Access (IAM)", "Keycloak / OIDC", "Аутентификация, SSO, RBAC, выпуск токенов")
+    Container(config, "Config & Feature Flags", "Unleash", "Конфигурация и прогрессивные релизы")
+    Container(eventbus, "Шина событий", "Kafka + Schema Registry", "Доменные события, партиционирование по регионам, реестр схем")
+}
+
+' ===================== ДОМЕННЫЕ СЕРВИСЫ =====================
+System_Boundary(domains, "Доменные сервисы (по продуктовым командам)") {
+    Container(booking, "Booking Service", "Go", "Жизненный цикл поездки, оркестрация матчинга (Saga), умное перераспределение водителей")
+    Container(driver_svc, "Driver Service", "Go", "Профиль водителя, ТС, документы, доступность, рейтинг")
+    Container(geography, "Geography Service", "Go + PostGIS", "Геоиндекс, ETA, зоны, маршрутизация, геозоны")
+    Container(pricing, "Pricing Service", "Go", "Тарифы, динамическое ценообразование, котировки")
+    Container(payments, "Payments Service", "Go", "Платежи пассажиров, возвраты, интеграция с PSP, журнал операций (входящие)")
+    Container(payouts, "Payouts Service", "Go", "Балансы, выплаты водителям и партнёрам, журнал операций (исходящие)")
+    Container(notification, "Notification Service", "Go", "Push / Email / SMS, шаблоны, предпочтения пользователей")
+    Container(analytics, "Analytics Service", "Kafka / Flink + ClickHouse", "Потоковая аналитика, витрины, фичи для ML и BI")
+    Container(fraud, "Fraud Service", "Python / Go", "Скоринг рисков, правила, ML-модели, чёрные списки")
+}
+
+' ===================== ЛЕГАСИ =====================
+System_Boundary(legacy, "Легаси (Strangler, выводится из эксплуатации)") {
+    Container(monolith, "GoFuture Monolith", "Django", "Остаток бизнес-логики. Функционал вырезается по волнам декомпозиции")
+    ContainerDb(legacy_db, "Legacy DB", "PostgreSQL", "Исходная общая БД; source of truth до cutover каждого домена")
+}
+
+' ===================== ХРАНИЛИЩА СЕРВИСОВ =====================
+System_Boundary(data, "Хранилища сервисов (database-per-service)") {
+    ContainerDb(db_booking, "Booking DB", "PostgreSQL", "Партиционирование по регионам")
+    ContainerDb(db_driver, "Driver DB", "PostgreSQL", "Профили и статусы")
+    ContainerDb(db_geo, "Geo Index", "PostGIS / Elasticsearch", "Геоиндекс водителей и зон")
+    ContainerDb(db_pricing, "Pricing DB + Cache", "PostgreSQL + Redis", "Правила, тарифы, состояние динамических цен")
+    ContainerDb(db_payments, "Журнал операций Payments", "PostgreSQL (append-only)", "Транзакции, возвраты")
+    ContainerDb(db_payouts, "Журнал операций Payouts", "PostgreSQL (append-only)", "Выплаты и балансы")
+    ContainerDb(db_notification, "Notification DB", "PostgreSQL + Redis", "Шаблоны, устройства, очередь")
+    ContainerDb(db_analytics, "Analytics DW", "ClickHouse", "Витрины и агрегаты")
+    ContainerDb(db_fraud, "Fraud DB", "PostgreSQL + Redis", "Кейсы, риск-профили, правила")
+}
+
+' ===================== ВНЕШНИЕ И ЛОКАЛЬНЫЕ ИНТЕГРАЦИИ =====================
+System_Boundary(ext, "Внешние и локальные сервисы") {
+    System_Ext(yandex_pay, "Яндекс Пэй", "PSP (RU)")
+    System_Ext(local_psp, "Локальные PSP", "SEA / LatAm")
+    System_Ext(yandex_maps, "Яндекс Карты", "Гео-провайдер (RU)")
+    System_Ext(local_maps, "Локальные карты", "Гео-провайдер SEA / LatAm")
+    System_Ext(push, "FCM / APNS / HMS", "Push-провайдеры")
+    System_Ext(bank_api, "Банковские API", "Партнёрские выплаты")
+}
+
+' ===================== OBSERVABILITY И CI/CD =====================
+System_Boundary(ops, "Наблюдаемость и CI/CD") {
+    Container(otel, "OpenTelemetry Collector", "OTel", "Сбор метрик, логов, трейсов")
+    Container(prom, "Prometheus + Grafana", "Observability", "Метрики, SLO-дашборды, алерты")
+    Container(lokitempo, "Loki + Jaeger", "Observability", "Логи и распределённые трейсы")
+    Container(cicd, "CI/CD", "Git + Jenkins + Docker Registry", "Независимый деплой каждого сервиса; сборка в Docker; IaC")
+}
+
+' ===================== СВЯЗИ: ПОЛЬЗОВАТЕЛИ -> КЛИЕНТЫ =====================
+Rel(passenger, app_passenger, "Использует")
+Rel(driver, app_driver, "Использует")
+Rel(manager, portal_corp, "Использует")
+Rel(accountant, portal_admin, "Использует")
+Rel(support, portal_admin, "Использует")
+
+' ===================== КЛИЕНТЫ -> GATEWAY =====================
+Rel(app_passenger, gateway, "HTTPS / REST (v1..vN)", "стабильный контракт")
+Rel(app_driver, gateway, "HTTPS / REST (v1..vN)")
+Rel(portal_corp, gateway, "HTTPS / REST")
+Rel(portal_admin, gateway, "HTTPS / REST")
+
+' ===================== GATEWAY =====================
+Rel(gateway, iam, "Проверка токенов", "OIDC / JWT")
+Rel(gateway, config, "Флаги и конфиг", "API")
+Rel(gateway, booking, "Маршрутизация", "HTTP/gRPC")
+Rel(gateway, driver_svc, "Маршрутизация", "HTTP/gRPC")
+Rel(gateway, pricing, "Маршрутизация", "HTTP/gRPC")
+Rel(gateway, payments, "Маршрутизация", "HTTP/gRPC")
+Rel(gateway, payouts, "Маршрутизация", "HTTP/gRPC")
+Rel(gateway, geography, "Маршрутизация", "HTTP/gRPC")
+Rel(gateway, notification, "Маршрутизация", "HTTP/gRPC")
+Rel(gateway, monolith, "Legacy-маршруты (пока не вырезаны)", "HTTP")
+Rel(gateway, acl, "Трансляция контрактов", "in-process/lib")
+
+' ===================== ВНУТРЕННИЕ ДОМЕННЫЕ ВЫЗОВЫ (синхронные, по необходимости) =====================
+Rel(booking, geography, "Геопоиск и ETA", "gRPC")
+Rel(booking, pricing, "Расчёт цены", "gRPC")
+Rel(booking, driver_svc, "Кандидаты и статус", "gRPC")
+Rel(booking, fraud, "Проверка риска", "gRPC")
+Rel(payments, fraud, "Проверка транзакции", "gRPC")
+Rel(payouts, driver_svc, "Данные водителя", "gRPC")
+
+' ===================== СОБЫТИЯ =====================
+Rel(booking, eventbus, "Публикует BookingCreated, DriverSearchStarted, DriverOfferCreated/Expired, DriverReserved, RideCompleted", "Kafka (outbox)")
+Rel(driver_svc, eventbus, "Публикует DriverLocationUpdated, DriverStatusChanged, DriverOfferAccepted/Declined", "Kafka")
+Rel(geography, eventbus, "Публикует ZoneEntered, EtaUpdated; топология ZoneBalance (KStreams) -> ZoneBalanceUpdated, ZoneDeficitDetected", "Kafka")
+Rel(pricing, eventbus, "Публикует PriceUpdated", "Kafka")
+Rel(payments, eventbus, "Публикует PaymentAuthorized, PaymentCaptured, PaymentFailed, PaymentRefunded", "Kafka")
+Rel(payouts, eventbus, "Публикует PayoutInitiated, PayoutCompleted, PayoutFailed", "Kafka")
+Rel(fraud, eventbus, "Публикует FraudDetected, FraudCleared", "Kafka")
+Rel(notification, eventbus, "Публикует NotificationSent", "Kafka")
+Rel(analytics, eventbus, "Публикует DemandForecastUpdated", "Kafka")
+Rel(eventbus, booking, "Доставляет DriverOfferAccepted/Declined, ZoneBalanceUpdated, DemandForecastUpdated, PaymentCaptured, DriverStatusChanged", "Kafka")
+Rel(eventbus, driver_svc, "Доставляет DriverOfferCreated, DriverReserved, BookingCreated, PayoutCompleted", "Kafka")
+Rel(eventbus, pricing, "Доставляет BookingCreated, DriverLocationUpdated, ZoneDeficitDetected, ZoneBalanceUpdated, DemandForecastUpdated", "Kafka")
+Rel(eventbus, geography, "Доставляет DriverLocationUpdated, BookingCreated", "Kafka")
+Rel(eventbus, notification, "Доставляет события для уведомлений", "Kafka")
+Rel(eventbus, analytics, "Доставляет поток событий", "Kafka")
+Rel(eventbus, fraud, "Доставляет BookingCreated, PaymentAuthorized, DriverStatusChanged", "Kafka")
+Rel(eventbus, payouts, "Доставляет PaymentCaptured, RideCompleted", "Kafka")
+Rel(eventbus, payments, "Доставляет RideCompleted, FraudCleared", "Kafka")
+
+' ===================== ACL -> ВНЕШНИЕ СЕРВИСЫ =====================
+Rel(acl, yandex_pay, "Платёжные вызовы", "REST")
+Rel(acl, local_psp, "Платёжные вызовы", "REST")
+Rel(acl, yandex_maps, "Геоданные", "REST")
+Rel(acl, local_maps, "Геоданные", "REST")
+Rel(acl, bank_api, "Выплаты", "REST")
+Rel(payments, acl, "Эквайринг/возвраты", "in-process")
+Rel(payouts, acl, "Выплаты", "in-process")
+Rel(geography, acl, "Геоданные/маршруты", "in-process")
+Rel(notification, acl, "Уведомления", "in-process")
+Rel(acl, push, "Push-уведомления", "FCM/APNS/HMS API")
+
+' ===================== ХРАНИЛИЩА =====================
+Rel(booking, db_booking, "Читает/пишет", "SQL")
+Rel(driver_svc, db_driver, "Читает/пишет", "SQL")
+Rel(geography, db_geo, "Индексирует/ищет", "SQL/API")
+Rel(pricing, db_pricing, "Читает/пишет", "SQL/Redis")
+Rel(payments, db_payments, "Журнал операций (append-only)", "SQL")
+Rel(payouts, db_payouts, "Журнал операций (append-only)", "SQL")
+Rel(notification, db_notification, "Читает/пишет", "SQL/Redis")
+Rel(analytics, db_analytics, "Читает/пишет", "SQL")
+Rel(fraud, db_fraud, "Читает/пишет", "SQL/Redis")
+Rel(monolith, legacy_db, "Читает/пишет", "ORM")
+Rel(monolith, eventbus, "CDC-поток изменений (Debezium)", "Kafka Connect")
+
+' ===================== НАБЛЮДАЕМОСТЬ И CI/CD =====================
+Rel(monolith, otel, "Телеметрия легаси", "OTLP")
+Rel(otel, prom, "Метрики", "Prometheus")
+Rel(otel, lokitempo, "Логи и трейсы", "OTLP")
+Rel(sre, prom, "Мониторит и настраивает SLO")
+Rel(cicd, monolith, "Деплой легаси (сокращается)", "Docker deploy")
+Rel(dev, cicd, "Запускает пайплайны")
+
+' ===================== ЛЕГЕНДА И АКЦЕНТЫ =====================
+
+UpdateElementStyle("monolith", $bgColor="#FADBD8", $fontColor="#7B241C", $borderColor="#C0392B", $borderStyle="Dashed")
+UpdateElementStyle("legacy_db", $bgColor="#FADBD8", $fontColor="#7B241C", $borderColor="#C0392B")
+UpdateElementStyle("gateway", $bgColor="#FDEBD0", $fontColor="#7E5109", $borderColor="#B9770E")
+UpdateElementStyle("acl", $bgColor="#FDEBD0", $fontColor="#7E5109", $borderColor="#B9770E")
+
+SHOW_LEGEND()
+
+note right of gateway
+  **Обратная совместимость**
+  - Единый стабильный REST-контракт для всех клиентов
+  - Версионирование (v1..vN), деприкейшн >= 2 релиза / 90 дней
+  - Dual-routing: новые сервисы + остаток монолита
+  - Fallback в монолит на время миграции
+  - BFF скрывает перестройку доменов от мобильных приложений
+end note
+
+note bottom of eventbus
+  Схемы событий совместимы (BACKWARD_TRANSITIVE),
+  envelope: {eventType, version, region, occurredAt, payload}
+end note
+
+note right of otel
+  **Телеметрия доменных сервисов**
+  Все доменные сервисы отправляют метрики,
+  логи и трейсы (OTLP). Связи не рисуются,
+  чтобы не засорять схему.
+end note
+
+note right of cicd
+  **Независимый деплой**
+  CI/CD выкладывает каждый доменный сервис
+  отдельно (Docker), инфраструктура как код.
+end note
+
+@enduml

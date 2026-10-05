@@ -1,0 +1,174 @@
+@startuml C2_EventDriven_GoFuture
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+' Требуется доступ к raw.githubusercontent.com (C4-PlantUML). Офлайн можно заменить на !include <C4/C4_Container>
+
+title C2 (Container) - GoFuture To-Be: событийная платформа (Event-Driven)
+
+' ===================== ЛЮДИ =====================
+Person(sre, "SRE инженер", "Эксплуатация и наблюдаемость")
+
+' ===================== ДОМЕННЫЕ СЕРВИСЫ =====================
+System_Boundary(domains, "Доменные сервисы (продюсеры и потребители)") {
+    Container(booking, "Booking Service", "Go", "Жизненный цикл поездки; оркестратор саги")
+    Container(driver, "Driver Service", "Go", "Водители, доступность, позиции")
+    Container(geography, "Geography Service", "Go", "Геоиндекс, ETA, зоны")
+    Container(pricing, "Pricing Service", "Go", "Тарифы, динамические цены")
+    Container(payments, "Payments Service", "Go", "Платежи, возвраты")
+    Container(payouts, "Payouts Service", "Go", "Выплаты водителям")
+    Container(notification, "Notification Service", "Go", "Push/Email/SMS")
+    Container(analytics, "Analytics Service", "Kafka/Flink + ClickHouse", "Потоковая аналитика, витрины")
+    Container(fraud, "Fraud Service", "Python/Go", "Скоринг риска, ML")
+}
+
+' ===================== СОБЫТИЙНАЯ ПЛАТФОРМА =====================
+System_Boundary(eventing, "Событийная платформа") {
+    Container(kafka, "Шина событий", "Kafka", "Топики <jurisdiction>.<domain>.<event>.v1 (jurisdiction = юрисдикция/страна), зеркалирование бизнес-топиков внутри юрисдикции")
+    Container(schema_registry, "Schema Registry", "Kafka", "Реестр схем, обратная совместимость")
+    Container(kafka_connect, "CDC / outbox-relay", "Kafka Connect + Debezium", "Публикует изменения из outbox в шину")
+}
+
+' ===================== ПОТОКОВАЯ ОБРАБОТКА =====================
+System_Boundary(streaming, "Потоковая обработка") {
+    Container(kstreams, "Kafka Streams", "KStreams", "Топологии внутри сервисов-владельцев (публикует сервис-владелец): Pricing - цены; Geography - баланс зон (ZoneBalance) и ETA; Analytics - витрины")
+    Container(flink, "Flink", "Apache Flink", "Тяжёлые агрегаты и ML-признаки")
+}
+
+' ===================== ХРАНИЛИЩА =====================
+System_Boundary(data, "Хранилища") {
+    ContainerDb(service_db, "БД каждого сервиса + outbox", "PostgreSQL (database-per-service)", "Бизнес-данные и транзакционный outbox")
+    ContainerDb(state_store, "Хранилище состояния", "Kafka Streams state", "Состояние потоковых задач")
+    ContainerDb(analytics_dw, "Аналитическое хранилище", "ClickHouse", "Витрины и признаки реального времени")
+    ContainerDb(saga_store, "Состояние саги", "PostgreSQL + компактированный топик", "Шаги процесса и тайм-ауты")
+}
+
+' ===================== МОНИТОРИНГ =====================
+System_Boundary(monitoring, "Мониторинг") {
+    Container(otel, "OpenTelemetry Collector", "OTel", "Сбор метрик, логов, трейсов")
+    Container(prometheus, "Prometheus", "Monitoring", "Метрики и правила алертов")
+    Container(grafana, "Grafana", "Dashboard", "Дашборды")
+    Container(loki, "Loki", "Logs", "Агрегация логов")
+    Container(jaeger, "Jaeger", "Tracing", "Распределённые трейсы")
+    Container(alertmanager, "Alertmanager", "Alerting", "Маршрутизация алертов")
+}
+
+' ===================== ЛЕГАСИ =====================
+System_Boundary(legacy, "Легаси (Strangler)") {
+    Container(monolith, "GoFuture Monolith", "Django", "Остаток логики; отдаёт изменения через CDC")
+}
+
+' ===================== СВЯЗИ: ДОМЕНЫ - ШИНА =====================
+Rel(booking, kafka, "Публикует BookingCreated, DriverSearchStarted, DriverOfferCreated/Expired, DriverReserved, RideCompleted, команды саги", "Kafka")
+Rel(driver, kafka, "Публикует DriverLocationUpdated, DriverStatusChanged, DriverOfferAccepted/Declined", "Kafka")
+Rel(geography, kafka, "Публикует ZoneEntered, EtaUpdated", "Kafka")
+Rel(pricing, kafka, "Публикует PriceUpdated", "Kafka")
+Rel(payments, kafka, "Публикует PaymentAuthorized, PaymentCaptured, PaymentFailed, PaymentRefunded", "Kafka")
+Rel(payouts, kafka, "Публикует PayoutInitiated, PayoutCompleted, PayoutFailed", "Kafka")
+Rel(fraud, kafka, "Публикует FraudDetected, FraudCleared", "Kafka")
+Rel(notification, kafka, "Публикует NotificationSent", "Kafka")
+
+Rel(kafka, booking, "Доставляет DriverOfferAccepted/Declined, ZoneBalanceUpdated, DemandForecastUpdated, PaymentCaptured, DriverStatusChanged", "Kafka")
+Rel(kafka, driver, "Доставляет DriverOfferCreated, DriverReserved, BookingCreated, PayoutCompleted, PayoutFailed", "Kafka")
+Rel(kafka, geography, "Доставляет DriverLocationUpdated, BookingCreated", "Kafka")
+Rel(kafka, pricing, "Доставляет BookingCreated, DriverLocationUpdated, ZoneDeficitDetected, ZoneBalanceUpdated, DemandForecastUpdated", "Kafka")
+Rel(kafka, payments, "Доставляет RideCompleted, FraudCleared", "Kafka")
+Rel(kafka, payouts, "Доставляет PaymentCaptured, RideCompleted", "Kafka")
+Rel(kafka, notification, "Доставляет события для уведомлений", "Kafka")
+Rel(kafka, analytics, "Доставляет поток событий", "Kafka")
+Rel(kafka, fraud, "Доставляет BookingCreated, PaymentAuthorized, DriverStatusChanged", "Kafka")
+
+' ===================== ПОТОКОВАЯ ОБРАБОТКА =====================
+Rel(kafka, kstreams, "Поток событий", "Kafka Streams")
+Rel(kstreams, kafka, "Публикует агрегаты доменов: ZoneBalanceUpdated / ZoneDeficitDetected (владелец - Geography)", "Kafka")
+Rel(kstreams, state_store, "Хранит состояние и окна", "State store")
+Rel(kafka, flink, "Поток событий", "Kafka")
+Rel(flink, analytics_dw, "Пишет витрины и ML-признаки", "ClickHouse")
+Rel(flink, kafka, "Публикует DemandForecastUpdated", "Kafka")
+Rel(analytics, analytics_dw, "Читает витрины", "SQL")
+
+' ===================== НАДЁЖНАЯ ДОСТАВКА =====================
+Rel(booking, service_db, "Бизнес-данные и outbox (одна транзакция)", "SQL")
+Rel(payments, service_db, "Бизнес-данные и outbox (одна транзакция)", "SQL")
+Rel(payouts, service_db, "Бизнес-данные и outbox (одна транзакция)", "SQL")
+Rel(service_db, kafka_connect, "Читает изменения (CDC)", "Debezium")
+Rel(kafka_connect, kafka, "Публикует события из outbox", "Kafka")
+Rel(monolith, kafka_connect, "CDC-поток изменений", "Debezium")
+Rel(kafka, schema_registry, "Проверка схем событий", "API")
+Rel(booking, saga_store, "Хранит состояние саги и тайм-ауты", "SQL")
+
+' ===================== МОНИТОРИНГ =====================
+Rel(booking, otel, "Телеметрия", "OTLP")
+Rel(driver, otel, "Телеметрия", "OTLP")
+Rel(pricing, otel, "Телеметрия", "OTLP")
+Rel(payments, otel, "Телеметрия", "OTLP")
+Rel(payouts, otel, "Телеметрия", "OTLP")
+Rel(fraud, otel, "Телеметрия", "OTLP")
+Rel(kstreams, otel, "Телеметрия", "OTLP")
+Rel(flink, otel, "Телеметрия", "OTLP")
+Rel(kafka, prometheus, "Метрики брокера и lag", "Exporter")
+Rel(otel, prometheus, "Метрики", "Prometheus")
+Rel(otel, loki, "Логи", "OTLP")
+Rel(otel, jaeger, "Трейсы", "OTLP")
+Rel(prometheus, grafana, "Источник данных", "PromQL")
+Rel(prometheus, alertmanager, "Алерты", "Alert rules")
+Rel(sre, grafana, "Смотрит дашборды")
+Rel(sre, alertmanager, "Дежурство и реакция")
+
+' ===================== ВНЕШНИЕ =====================
+System_Boundary(integ, "Интеграции (слой изоляции, ACL)") {
+    Container(acl, "Слой изоляции интеграций", "адаптеры", "Единая точка доступа к внешним платёжным, картографическим и push-сервисам")
+}
+System_Ext(psp, "Платёжные шлюзы", "Яндекс Пэй и локальные PSP")
+System_Ext(push, "Push-провайдеры", "FCM / APNS / HMS")
+System_Ext(maps, "Картографические сервисы", "Яндекс Карты и локальные")
+Rel(payments, acl, "Эквайринг и возвраты", "адаптер")
+Rel(payouts, acl, "Выплаты", "адаптер")
+Rel(notification, acl, "Уведомления", "адаптер")
+Rel(geography, acl, "Геоданные", "адаптер")
+Rel(acl, psp, "Платежи", "REST")
+Rel(acl, push, "Push", "REST")
+Rel(acl, maps, "Геоданные", "REST")
+
+' ===================== АКЦЕНТЫ =====================
+UpdateElementStyle("kafka", $bgColor="#FDEBD0", $fontColor="#7E5109", $borderColor="#B9770E")
+UpdateElementStyle("schema_registry", $bgColor="#FDEBD0", $fontColor="#7E5109", $borderColor="#B9770E")
+UpdateElementStyle("kafka_connect", $bgColor="#FDEBD0", $fontColor="#7E5109", $borderColor="#B9770E")
+UpdateElementStyle("kstreams", $bgColor="#D6EAF8", $fontColor="#1B4F72", $borderColor="#2874A6")
+UpdateElementStyle("flink", $bgColor="#D6EAF8", $fontColor="#1B4F72", $borderColor="#2874A6")
+UpdateElementStyle("monolith", $bgColor="#FADBD8", $fontColor="#7B241C", $borderColor="#C0392B", $borderStyle="Dashed")
+
+SHOW_LEGEND()
+
+note right of kafka
+  **Партиционирование (по юрисдикциям)**
+  Имя топика: <jurisdiction>.<domain>.<event>.v1,
+  где jurisdiction = юрисдикция/страна (ru/id/br/sg).
+  Ключ партиции: идентификатор сущности
+  (rideId / driverId / paymentId).
+  Порядок - в пределах сущности
+end note
+
+note bottom of kafka_connect
+  **Надёжная доставка**
+  outbox (в одной транзакции с данными) +
+  CDC публикация, at-least-once,
+  идемпотентные потребители, ретраи, DLQ
+end note
+
+note bottom of booking
+  **Saga: оркестрация + диспетчеризация**
+  Booking ведёт процесс поездки и денег, хранит
+  состояние и тайм-ауты, запускает компенсации.
+  Умное перераспределение: окно подбора, ранжирование
+  кандидатов по ETA, дефициту зоны и прогнозу спроса,
+  офферы DriverOfferCreated с TTL, fallback по SLA.
+end note
+
+note bottom of kstreams
+  **ZoneBalance (Kafka Streams)**
+  Считает спрос/предложение и дефицит по зонам,
+  публикует ZoneBalanceUpdated / ZoneDeficitDetected.
+  Pricing поднимает цену (PriceUpdated) по дефициту,
+  Booking смещает офферы из переполненных зон.
+end note
+
+@enduml

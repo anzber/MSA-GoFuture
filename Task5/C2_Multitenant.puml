@@ -1,0 +1,105 @@
+@startuml C2_Multitenant
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title C2 (Container) - мультитенантная платформа GoFuture (IAM, изоляция, онбординг, мониторинг)
+
+' ===================== ЛЮДИ =====================
+Person(tenant_admin, "Администратор партнёра", "Управляет своим тенантом")
+Person(tenant_analyst, "Аналитик партнёра", "Смотрит агрегаты своего тенанта")
+Person(tenant_support, "Оператор поддержки", "Работает с данными своего тенанта")
+Person(passenger, "Пассажир", "Заказывает поездки")
+Person(driver, "Водитель", "Принимает заказы")
+Person(platform_admin, "Администратор платформы", "Настройки платформы, без персональных данных тенантов")
+Person(sre, "SRE инженер", "Эксплуатация и мониторинг")
+
+' ===================== ТЕНАНТЫ =====================
+System_Boundary(tenants, "Тенанты (партнёры)") {
+    System_Ext(tenant_local, "Партнёры", "Локальные службы такси, банки, e-commerce")
+}
+
+' ===================== ПЛАТФОРМА =====================
+System_Boundary(platform, "Мультитенантная платформа GoFuture") {
+    Container(gateway, "API Gateway / BFF", "определение тенанта", "Извлекает тенант из токена, маршрутизация, версии")
+    Container(iam, "IAM: SSO и роли", "OIDC / RBAC", "Единый вход, роли, интеграционные ключи, аудит входа")
+    Container(onboard, "Сервис онбординга", "выделение ресурсов", "Автоматическое создание тенанта и проверки")
+    Container(config, "Конфигурация и флаги", "по тенанту", "Кастомизация тарифов, зон, способов оплаты")
+    Container(domains, "Доменные сервисы", "мультитенантные", "Booking, Pricing, Payments, Payouts, Driver и др. с контекстом тенанта")
+    ContainerDb(tenant_dbs, "БД тенантов", "PostgreSQL (отдельная БД на тенанта)", "По умолчанию - отдельная БД на тенанта в его регионе")
+    ContainerDb(dedicated_db, "Отдельные инстансы регулируемых тенантов", "PostgreSQL", "Максимальная изоляция по триггеру")
+    Container(kafka, "Шина событий", "Kafka", "События с идентификатором тенанта")
+    System_Boundary(monitoring, "Мониторинг (по тенантам)") {
+        Container(otel, "OpenTelemetry Collector", "OTel", "Сбор метрик, логов, трейсов с меткой тенанта")
+        Container(prometheus, "Prometheus", "метрики", "Метрики и правила алертов по тенантам")
+        Container(grafana, "Grafana", "дашборды", "Дашборды платформы и по каждому тенанту")
+        Container(loki, "Loki", "логи", "Логи по тенантам")
+        Container(jaeger, "Jaeger", "трейсы", "Трейсы по тенантам")
+        Container(alertmanager, "Alertmanager", "алерты", "Алерты по тенантам")
+    }
+    Container(audit, "Аудит доступа", "журнал", "Неизменяемый журнал действий по тенантам")
+    Container(acl, "Слой изоляции интеграций", "адаптеры", "Единая точка доступа к внешним сервисам")
+}
+
+' ===================== ВНЕШНИЕ =====================
+System_Ext(psp, "Локальные платёжные сервисы", "PSP по регионам")
+System_Ext(maps, "Локальные картографические сервисы", "Карты по регионам")
+System_Ext(push, "Push-провайдеры", "FCM / APNS / HMS")
+
+' ===================== СВЯЗИ =====================
+Rel(tenant_admin, gateway, "Управляет тенантом", "HTTPS")
+Rel(tenant_analyst, gateway, "Смотрит агрегаты", "HTTPS")
+Rel(tenant_support, gateway, "Работает с данными", "HTTPS")
+Rel(passenger, gateway, "Заказывает поездки", "HTTPS")
+Rel(driver, gateway, "Принимает заказы", "HTTPS")
+Rel(platform_admin, gateway, "Настройки платформы", "HTTPS")
+
+Rel(gateway, iam, "Проверка токена и прав", "OIDC/RBAC")
+Rel(gateway, config, "Конфигурация тенанта", "API")
+Rel(gateway, domains, "Маршрутизация с контекстом тенанта", "HTTP/gRPC")
+
+Rel(domains, tenant_dbs, "Данные тенанта (отдельная БД)", "SQL")
+Rel(domains, dedicated_db, "Данные регулируемого тенанта", "SQL")
+Rel(domains, kafka, "Публикация и чтение событий", "Kafka")
+Rel(domains, audit, "Запись действий", "журнал")
+Rel(iam, audit, "События входа и доступа", "журнал")
+
+Rel(onboard, tenant_dbs, "Создаёт БД, роли и ключ шифрования", "выделение ресурсов")
+Rel(onboard, dedicated_db, "Создаёт отдельный инстанс", "выделение ресурсов")
+Rel(onboard, iam, "Создаёт роли, SSO, ключи", "API")
+Rel(onboard, config, "Задаёт конфигурацию тенанта", "API")
+Rel(onboard, grafana, "Включает дашборд тенанта", "API")
+Rel(tenant_local, onboard, "Подключается как партнёр", "портал")
+
+Rel(domains, otel, "Метрики, логи, трейсы", "OTLP")
+Rel(kafka, prometheus, "Метрики брокера и lag", "exporter")
+Rel(otel, prometheus, "Метрики", "Prometheus")
+Rel(otel, loki, "Логи", "OTLP")
+Rel(otel, jaeger, "Трейсы", "OTLP")
+Rel(prometheus, grafana, "Данные", "PromQL")
+Rel(prometheus, alertmanager, "Алерты", "правила")
+Rel(sre, grafana, "Смотрит дашборды")
+Rel(sre, alertmanager, "Дежурство и реакция")
+
+Rel(domains, acl, "Внешние вызовы (через изоляцию)", "адаптер")
+Rel(acl, psp, "Платежи", "REST")
+Rel(acl, maps, "Геоданные", "REST")
+Rel(acl, push, "Уведомления", "REST")
+
+SHOW_LEGEND()
+
+note right of tenant_dbs
+  **Изоляция данных**
+  Отдельная БД на тенанта по умолчанию;
+  отдельный инстанс для регулируемых;
+  схема - исключение для очень мелких.
+  Данные шифруются ключом тенанта (KMS).
+  Любой запрос - только в контексте тенанта.
+end note
+
+note bottom of onboard
+  **Онбординг**
+  Заявка -> выделение ресурсов -> доступ и SSO ->
+  интеграции -> проверки изоляции -> активация ->
+  мониторинг. См. Onboarding_Flow.
+end note
+
+@enduml
