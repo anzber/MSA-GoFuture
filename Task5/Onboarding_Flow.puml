@@ -1,0 +1,62 @@
+@startuml Onboarding_Flow
+title Поток онбординга нового партнёра (тенанта)
+
+autonumber
+
+participant "Партнёр" as partner
+participant "Портал онбординга" as portal
+participant "Оркестратор выделения ресурсов" as orch
+participant "Хранилище (БД тенанта)" as db
+participant "IAM (SSO, роли, ключи)" as iam
+participant "Каталог интеграций" as integ
+participant "Проверки (изоляция, smoke, данные)" as checks
+participant "Мониторинг тенанта" as mon
+
+partner -> portal : Заявка и данные партнёра
+activate portal
+portal -> orch : Старт онбординга
+activate orch
+
+orch -> db : Создать БД тенанта, роли, ключ шифрования и лимиты
+activate db
+db --> orch : Готово
+deactivate db
+
+orch -> iam : Создать администратора, роли, SSO, ключи API
+activate iam
+iam --> orch : Доступ настроен
+deactivate iam
+
+orch -> integ : Подключить платёжные, картографические, push-сервисы
+activate integ
+integ --> orch : Интеграции подключены
+deactivate integ
+
+orch -> db : Импорт справочников (парк, водители, зоны)
+activate db
+db --> orch : Данные загружены
+deactivate db
+
+orch -> checks : Тесты изоляции, smoke-тесты, проверки данных
+activate checks
+checks --> orch : Результаты проверок
+deactivate checks
+
+alt Проверки пройдены
+    orch -> mon : Включить дашборд и алерты тенанта
+    activate mon
+    mon --> orch : Мониторинг включён
+    deactivate mon
+    orch -> portal : Тенант активирован
+    portal -> partner : Доступ открыт
+else Проверки не пройдены
+    orch -> db : Откат выделения ресурсов
+    orch -> iam : Отозвать доступ
+    orch -> portal : Онбординг отклонён с причинами
+    portal -> partner : Требуется доработка данных
+end
+
+deactivate orch
+deactivate portal
+
+@enduml

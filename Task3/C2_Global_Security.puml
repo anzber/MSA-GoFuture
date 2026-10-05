@@ -1,0 +1,127 @@
+@startuml C2_Global_Security
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title C2 (Container) - security-оверлей поверх To-Be C2: глобальное развёртывание и защита (изменения красным)
+
+AddElementTag("new", $bgColor="#FADBD8", $fontColor="#7B241C", $borderColor="#C0392B")
+AddRelTag("new", $lineColor="#C0392B", $textColor="#7B241C")
+
+' ===================== ЛЮДИ =====================
+Person(passenger, "Пассажир", "Заказывает поездки")
+Person(driver, "Водитель", "Принимает заказы")
+Person(sre, "SRE инженер", "Эксплуатация и безопасность")
+
+' ===================== ЗАЩИТА ПЕРИМЕТРА (ГЛОБАЛЬНО) =====================
+System_Boundary(perimeter, "Глобальный вход") {
+    Container(gdns, "Глобальный DNS", "геомаршрутизация + проверки здоровья", "Направляет в ближайший здоровый регион", $tags="new")
+}
+
+' ===================== РЕГИОНЫ =====================
+System_Boundary(regions, "Юрисдикции и регионы (одновременно активные): 4 / 7") {
+    Container(reg_ru, "Регион 1 (РФ)", "ru", "Основной регион РФ (существующий, контекст)")
+    Container(reg_ru2, "Регион 2 (РФ)", "ru2", "Второй регион юрисдикции РФ", $tags="new")
+    Container(reg_id, "Регион 1 (Индонезия)", "id", "Основной регион Индонезии", $tags="new")
+    Container(reg_id2, "Регион 2 (Индонезия)", "id2", "Второй регион Индонезии", $tags="new")
+    Container(reg_br, "Регион 1 (Бразилия)", "br", "Основной регион Бразилии", $tags="new")
+    Container(reg_br2, "Регион 2 (Бразилия)", "br2", "Второй регион Бразилии", $tags="new")
+    Container(reg_sg, "Регион 1 (Сингапур)", "sg", "Город-государство: единственный регион", $tags="new")
+}
+
+' ===================== ВНУТРИ РЕГИОНА (ТИПОВОЙ) =====================
+System_Boundary(region, "Внутреннее устройство региона (типовое; применяется в каждом регионе)") {
+    Container(ddos, "Защита от DDoS", "фильтрация всплесков", "Отражение атак на доступность", $tags="new")
+    Container(waf, "WAF", "фильтрация веб-атак", "Защита API от атак", $tags="new")
+    Container(fw, "Firewall и сегментация сети", "межсетевой экран", "Правила доступа между зонами и сервисами", $tags="new")
+    Container(ips, "IPS/IDS", "обнаружение вторжений", "Выявление и блокировка вторжений", $tags="new")
+    Container(gw, "API Gateway / BFF / Strangler", "ограничение частоты запросов", "Единый вход, версии, throttling, маршрутизация в новые и легаси-сервисы")
+    Container(domains, "Доменные сервисы", "микросервисы", "Booking, Driver, Geography, Pricing, Payments, Payouts, Notification, Analytics, Fraud")
+    ContainerDb(db, "БД сервисов + outbox", "PostgreSQL", "Данные региона и транзакционный outbox")
+    Container(kafka, "Шина событий", "Kafka", "Топики региона, партиционирование")
+}
+
+' ===================== ПЛАТФОРМА И ЗАЩИТА ДАННЫХ =====================
+System_Boundary(platform, "Платформа и защита данных") {
+    Container(iam, "Идентификация и доступ", "IAM", "Аутентификация, SSO, роли")
+    Container(secrets, "Секрет-хранилище", "управление секретами", "Хранение и ротация секретов", $tags="new")
+    Container(mtls, "mTLS между сервисами", "взаимная TLS", "Защита и подтверждение подлинности внутреннего трафика", $tags="new")
+    Container(acl, "Слой изоляции интеграций (ACL)", "адаптеры", "Единая точка доступа к внешним сервисам", $tags="new")
+    Container(cicd, "CI/CD", "Git + Jenkins + Docker Registry", "Независимый деплой сервисов; сборка в Docker; IaC")
+}
+
+' ===================== НАБЛЮДАЕМОСТЬ И БЕЗОПАСНОСТЬ =====================
+System_Boundary(monitoring, "Наблюдаемость и безопасность") {
+    Container(otel, "OpenTelemetry Collector", "OTel", "Сбор метрик, логов, трейсов")
+    Container(prometheus, "Prometheus", "метрики", "Метрики и правила алертов")
+    Container(grafana, "Grafana", "дашборды", "Визуализация")
+    Container(loki, "Loki", "логи", "Агрегация логов")
+    Container(jaeger, "Jaeger", "трейсы", "Распределённые трейсы")
+    Container(alertmanager, "Alertmanager", "алерты", "Маршрутизация алертов")
+    Container(secops, "Централизованный сбор событий безопасности", "аудит", "Корреляция и расследование инцидентов", $tags="new")
+}
+
+' ===================== ВНЕШНИЕ СЕРВИСЫ =====================
+System_Ext(psp, "Локальные платёжные провайдеры", "PSP по регионам")
+System_Ext(maps, "Локальные картографические сервисы", "Карты по регионам")
+System_Ext(push, "Push-провайдеры", "FCM / APNS / HMS")
+
+' ===================== СВЯЗИ =====================
+Rel(passenger, gdns, "Обращается", "HTTPS")
+Rel(driver, gdns, "Обращается", "HTTPS")
+Rel(gdns, reg_ru, "Трафик региона", "HTTPS", $tags="new")
+Rel(gdns, reg_ru2, "Трафик региона", "HTTPS", $tags="new")
+Rel(gdns, reg_id, "Трафик региона", "HTTPS", $tags="new")
+Rel(gdns, reg_id2, "Трафик региона", "HTTPS", $tags="new")
+Rel(gdns, reg_br, "Трафик региона", "HTTPS", $tags="new")
+Rel(gdns, reg_br2, "Трафик региона", "HTTPS", $tags="new")
+Rel(gdns, reg_sg, "Трафик региона", "HTTPS", $tags="new")
+
+Rel(ddos, waf, "Очищенный трафик", "фильтрация", $tags="new")
+Rel(waf, fw, "Отфильтрованный трафик", "правила", $tags="new")
+Rel(fw, gw, "Разрешённый трафик", "правила", $tags="new")
+Rel(gw, domains, "Маршрутизация", "HTTP/gRPC")
+Rel(domains, db, "Чтение/запись и outbox", "SQL")
+Rel(domains, kafka, "Публикация и чтение событий", "Kafka")
+Rel(ips, fw, "Обнаружение вторжений", "мониторинг трафика", $tags="new")
+
+Rel(domains, iam, "Проверка доступа", "OIDC")
+Rel(domains, secrets, "Секреты", "API", $tags="new")
+Rel(domains, mtls, "Внутренний трафик", "mTLS", $tags="new")
+
+Rel(waf, secops, "События безопасности", "логи", $tags="new")
+Rel(ips, secops, "События безопасности", "логи", $tags="new")
+Rel(domains, secops, "Аудит доступа к данным", "логи", $tags="new")
+
+Rel(domains, otel, "Телеметрия", "OTLP")
+Rel(kafka, prometheus, "Метрики брокера и lag", "exporter")
+Rel(otel, prometheus, "Метрики", "Prometheus")
+Rel(otel, loki, "Логи", "OTLP")
+Rel(otel, jaeger, "Трейсы", "OTLP")
+Rel(prometheus, grafana, "Данные", "PromQL")
+Rel(prometheus, alertmanager, "Алерты", "правила")
+Rel(sre, grafana, "Смотрит дашборды")
+Rel(sre, secops, "Расследует инциденты")
+
+Rel(domains, acl, "Внешние вызовы (через изоляцию)", "адаптер")
+Rel(acl, psp, "Платежи", "REST")
+Rel(acl, maps, "Геоданные", "REST")
+Rel(acl, push, "Уведомления", "REST")
+
+SHOW_LEGEND()
+
+note top of perimeter
+  **Изменения выделены красным**
+  Глобально: глобальный DNS (геомаршрутизация).
+  В каждом регионе: защита от DDoS, WAF, Firewall и сегментация, IPS/IDS.
+  Также: mTLS, секрет-хранилище, централизованный сбор событий безопасности.
+end note
+
+note bottom of regions
+  **Логический оверлей безопасности поверх Task1/C2_ToBe_GoFuture**
+  Структура доменов, слоя совместимости (Gateway/BFF/Strangler, ACL), хранилищ и CI/CD -
+  та же, что в To-Be C2; здесь она не дублируется, а показаны добавленные элементы защиты
+  и глобальное развёртывание. Красным - новое (глобальный DNS, вторые регионы юрисдикций,
+  DDoS/WAF/Firewall/IPS, mTLS, секрет-хранилище, аудит безопасности).
+  Регион 1 (РФ) - существующий, показан как контекст. У Сингапура - единственный регион.
+end note
+
+@enduml
